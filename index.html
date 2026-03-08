@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>🔍 AI 安全調查員</title>
+<style>
+  :root {
+    --bg:      #071020;
+    --accent:  #ff8c00;
+    --accent2: #ffb347;
+    --green:   #00e676;
+    --text:    #ddeeff;
+    --dim:     #6a88a8;
+    --card:    #081830;
+    --border:  rgba(255,140,0,0.45);
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans TC', 'Microsoft JhengHei', 'PingFang TC', sans-serif;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh; /* dynamic viewport for mobile */
+  }
+
+  /* ─── Status Bar ─── */
+  .status-bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 9px 16px;
+    background: linear-gradient(90deg, #050e1c 0%, #0a1c36 100%);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .status-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 1px;
+    white-space: nowrap;
+  }
+
+  .status-student {
+    flex: 1;
+    font-size: 12px;
+    color: var(--dim);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .status-badge {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: rgba(255,140,0,0.08);
+    color: var(--accent2);
+    white-space: nowrap;
+  }
+
+  /* ─── Scene Wrapper ─── */
+  .scene-wrapper {
+    flex: 1;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    min-height: 0;
+    background: #020810;
+  }
+
+  /* ─── Scene Container ─── */
+  /* Aspect ratio matches image: 2760 × 1504 ≈ 1.835 */
+  .scene-container {
+    position: relative;
+    aspect-ratio: 2760 / 1504;
+    max-width: 100%;
+    max-height: 100%;
+    /* Also constrain by width on tall screens */
+    width: min(100%, calc(100dvh * 1.835 - 120px));
+  }
+
+  .scene-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    border-radius: 4px;
+  }
+
+  /* HUD scan-line overlay for sci-fi feel */
+  .scene-container::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 3px,
+      rgba(0,40,80,0.04) 3px,
+      rgba(0,40,80,0.04) 4px
+    );
+    pointer-events: none;
+    border-radius: 4px;
+  }
+
+  /* Corner HUD brackets */
+  .hud-corner {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    border-color: var(--accent);
+    border-style: solid;
+    opacity: 0.7;
+    pointer-events: none;
+  }
+  .hud-tl { top:8px; left:8px;  border-width: 2px 0 0 2px; }
+  .hud-tr { top:8px; right:8px; border-width: 2px 2px 0 0; }
+  .hud-bl { bottom:8px; left:8px;  border-width: 0 0 2px 2px; }
+  .hud-br { bottom:8px; right:8px; border-width: 0 2px 2px 0; }
+
+  /* ─── Hotspots ─── */
+  .hotspot {
+    position: absolute;
+    width: clamp(38px, 5vw, 54px);
+    height: clamp(38px, 5vw, 54px);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(10, 20, 40, 0.55);
+    border: 2px solid var(--accent);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(16px, 2.2vw, 24px);
+    cursor: pointer;
+    animation: pulse 2.8s infinite;
+    transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    touch-action: manipulation;
+    z-index: 10;
+  }
+
+  .hotspot:active { transform: translate(-50%,-50%) scale(0.92); }
+
+  .hotspot.collected {
+    background: rgba(0,60,30,0.65);
+    border-color: var(--green);
+    box-shadow: 0 0 16px rgba(0,230,118,0.55);
+    animation: none;
+  }
+
+  /* label under each hotspot */
+  .hotspot-label {
+    position: absolute;
+    bottom: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    white-space: nowrap;
+    color: rgba(255,220,150,0.85);
+    pointer-events: none;
+    letter-spacing: 0.5px;
+  }
+
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(255,140,0,0.55); }
+    50%      { box-shadow: 0 0 0 10px rgba(255,140,0,0); }
+  }
+
+  /* ─── Progress Bar ─── */
+  .progress-bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 16px;
+    background: linear-gradient(90deg, #050e1c 0%, #0a1c36 100%);
+    border-top: 1px solid var(--border);
+  }
+
+  .progress-label {
+    font-size: 12px;
+    color: var(--dim);
+    white-space: nowrap;
+  }
+
+  .dots { display: flex; gap: 5px; }
+
+  .dot {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    border: 1.5px solid var(--dim);
+    transition: all 0.35s;
+  }
+
+  .dot.filled {
+    background: var(--green);
+    border-color: var(--green);
+    box-shadow: 0 0 7px rgba(0,230,118,0.65);
+  }
+
+  .progress-text {
+    flex: 1;
+    font-size: 12px;
+    color: var(--dim);
+    transition: color 0.3s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .btn-next {
+    flex-shrink: 0;
+    padding: 7px 16px;
+    border-radius: 20px;
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    opacity: 0.3;
+    pointer-events: none;
+    font-family: inherit;
+    transition: opacity 0.3s, background 0.3s, color 0.3s, transform 0.2s;
+    white-space: nowrap;
+  }
+
+  .btn-next.active {
+    opacity: 1;
+    pointer-events: all;
+    background: var(--accent);
+    color: #000;
+  }
+
+  .btn-next.active:hover  { transform: scale(1.05); }
+  .btn-next.active:active { transform: scale(0.97); }
+
+  /* ─── Evidence Modal ─── */
+  .overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,5,15,0.78);
+    z-index: 400;
+    justify-content: center;
+    align-items: center;
+    padding: 16px;
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+  }
+  .overlay.open { display: flex; }
+
+  .ev-card {
+    position: relative;
+    background: linear-gradient(160deg, #0b1f3a, #061528);
+    border: 1px solid rgba(255,140,0,0.6);
+    border-radius: 20px;
+    padding: 26px 22px 22px;
+    max-width: 420px;
+    width: 100%;
+    box-shadow:
+      0 0 60px rgba(255,140,0,0.12),
+      inset 0 1px 0 rgba(255,255,255,0.05);
+    animation: slideUp 0.25s cubic-bezier(0.34,1.56,0.64,1);
+  }
+
+  @keyframes slideUp {
+    from { transform: translateY(32px) scale(0.95); opacity: 0; }
+    to   { transform: translateY(0)    scale(1);    opacity: 1; }
+  }
+
+  /* Top accent line */
+  .ev-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 20px; right: 20px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    border-radius: 2px;
+  }
+
+  .ev-close {
+    position: absolute;
+    top: 12px; right: 14px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 50%;
+    width: 28px; height: 28px;
+    color: var(--dim);
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+  }
+  .ev-close:hover { background: rgba(255,255,255,0.12); }
+
+  .ev-tag {
+    display: inline-block;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: rgba(255,140,0,0.1);
+    border: 1px solid rgba(255,140,0,0.3);
+    border-radius: 20px;
+    padding: 2px 10px;
+    margin-bottom: 12px;
+  }
+
+  .ev-icon { font-size: 32px; display: block; margin-bottom: 8px; }
+
+  .ev-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 14px;
+    line-height: 1.3;
+  }
+
+  .ev-body {
+    font-size: 15px;
+    line-height: 1.8;
+    color: #c8d8e8;
+    background: rgba(255,255,255,0.04);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 12px 14px;
+    margin-bottom: 18px;
+  }
+
+  .ev-body em {
+    color: var(--accent2);
+    font-style: normal;
+    font-weight: 600;
+  }
+
+  .ev-body strong {
+    color: #fff;
+  }
+
+  .btn-collect {
+    width: 100%;
+    padding: 13px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #0f5a30 0%, #00a854 100%);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    letter-spacing: 0.5px;
+    transition: transform 0.2s, box-shadow 0.2s, background 0.3s;
+    box-shadow: 0 4px 16px rgba(0,168,84,0.25);
+  }
+
+  .btn-collect:hover:not(.done) {
+    transform: scale(1.02);
+    box-shadow: 0 6px 22px rgba(0,168,84,0.4);
+  }
+
+  .btn-collect:active:not(.done) { transform: scale(0.98); }
+
+  .btn-collect.done {
+    background: linear-gradient(135deg, #0d2a1a, #0d2a1a);
+    color: #3a7a50;
+    cursor: default;
+    box-shadow: none;
+  }
+
+  /* ─── Toast ─── */
+  .toast {
+    position: fixed;
+    bottom: 74px;
+    left: 50%;
+    transform: translateX(-50%) translateY(16px);
+    background: rgba(0,40,20,0.95);
+    border: 1px solid var(--green);
+    border-radius: 30px;
+    padding: 9px 22px;
+    font-size: 13px;
+    color: var(--green);
+    opacity: 0;
+    transition: opacity 0.28s, transform 0.28s;
+    pointer-events: none;
+    z-index: 500;
+    white-space: nowrap;
+    backdrop-filter: blur(8px);
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* ─── Login Screen ─── */
+  #screen-login {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    /* animated grid background */
+    background-image:
+      linear-gradient(rgba(255,140,0,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,140,0,0.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  #screen-login.hidden {
+    display: none;
+  }
+
+  .login-header {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+
+  .login-badge {
+    display: inline-block;
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 14px;
+    margin-bottom: 16px;
+    background: rgba(255,140,0,0.06);
+  }
+
+  .login-title {
+    font-size: clamp(22px, 4vw, 30px);
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.3;
+    margin-bottom: 8px;
+  }
+
+  .login-subtitle {
+    font-size: 14px;
+    color: var(--dim);
+    line-height: 1.6;
+  }
+
+  .login-card {
+    background: linear-gradient(160deg, #0b1f3a, #061528);
+    border: 1px solid rgba(255,140,0,0.45);
+    border-radius: 20px;
+    padding: 28px 28px 24px;
+    width: 100%;
+    max-width: 380px;
+    box-shadow: 0 0 60px rgba(255,140,0,0.08), inset 0 1px 0 rgba(255,255,255,0.04);
+    position: relative;
+    animation: slideUp 0.4s cubic-bezier(0.34,1.2,0.64,1);
+  }
+
+  /* top glow line */
+  .login-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 24px; right: 24px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    border-radius: 2px;
+  }
+
+  .form-group {
+    margin-bottom: 18px;
+  }
+
+  .form-label {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 7px;
+  }
+
+  .form-control {
+    width: 100%;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 10px;
+    padding: 12px 14px;
+    color: #fff;
+    font-size: 15px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  .form-control:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(255,140,0,0.15);
+  }
+
+  /* Dropdown arrow */
+  .form-select-wrap {
+    position: relative;
+  }
+  .form-select-wrap::after {
+    content: '▾';
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent);
+    pointer-events: none;
+    font-size: 14px;
+  }
+  .form-select-wrap .form-control {
+    padding-right: 36px;
+    cursor: pointer;
+  }
+
+  /* Style dropdown options (limited browser support, best-effort) */
+  .form-control option {
+    background: #0d2040;
+    color: #fff;
+  }
+
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  .btn-start {
+    width: 100%;
+    margin-top: 8px;
+    padding: 14px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #c85a00, #ff8c00, #ffaa30);
+    background-size: 200% 200%;
+    animation: shimmer 3s infinite;
+    color: #000;
+    font-size: 16px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    transition: transform 0.2s, box-shadow 0.2s;
+    box-shadow: 0 4px 20px rgba(255,140,0,0.35);
+  }
+
+  .btn-start:hover  { transform: scale(1.02); box-shadow: 0 6px 28px rgba(255,140,0,0.5); }
+  .btn-start:active { transform: scale(0.97); }
+
+  @keyframes shimmer {
+    0%,100% { background-position: 0% 50%; }
+    50%      { background-position: 100% 50%; }
+  }
+
+  .form-error {
+    font-size: 12px;
+    color: #ff6b6b;
+    margin-top: 6px;
+    display: none;
+  }
+  .form-error.show { display: block; }
+
+  /* screen-main starts hidden, fades in after login */
+  #screen-main {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    opacity: 0;
+    transition: opacity 0.5s;
+  }
+  #screen-main.visible { opacity: 1; }
+
+  /* ─── Responsive tweaks ─── */
+  @media (max-width: 480px) {
+    .status-bar { padding: 8px 12px; }
+    .progress-bar { padding: 8px 12px; gap: 8px; }
+    .btn-next { padding: 6px 12px; font-size: 12px; }
+    .dots { gap: 4px; }
+    .dot { width: 11px; height: 11px; }
+    .hotspot-label { display: none; }
+  }
+
+  @media (orientation: portrait) and (max-width: 768px) {
+    /* On tall phone screens, let the scene fill width */
+    .scene-container {
+      width: 100%;
+      aspect-ratio: 2816 / 1536;
+      max-height: unset;
+    }
+    .scene-wrapper { align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════
+     LOGIN SCREEN
+     ══════════════════════════════════════ -->
+<div id="screen-login">
+
+  <div class="login-header">
+    <div class="login-badge">🔍 任務啟動</div>
+    <div class="login-title">AI 安全調查員</div>
+    <div class="login-subtitle">請輸入你的偵探身份，才能進入案發現場</div>
+  </div>
+
+  <div class="login-card">
+    <!-- 班級 -->
+    <div class="form-group">
+      <label class="form-label" for="input-class">班級</label>
+      <div class="form-select-wrap">
+        <select class="form-control" id="input-class">
+          <option value="">— 選擇班級 —</option>
+          <option value="五年一班">五年一班</option>
+          <option value="五年二班">五年二班</option>
+          <option value="五年三班">五年三班</option>
+          <option value="五年四班">五年四班</option>
+          <option value="五年五班">五年五班</option>
+          <option value="五年六班">五年六班</option>
+          <option value="五年七班">五年七班</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 座號 ＋ 姓名 (side by side) -->
+    <div class="form-row">
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label" for="input-seat">座號</label>
+        <input class="form-control" id="input-seat"
+               type="number" min="1" max="40"
+               placeholder="例：8">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label" for="input-name">姓名</label>
+        <input class="form-control" id="input-name"
+               type="text" maxlength="10"
+               placeholder="你的名字">
+      </div>
+    </div>
+
+    <div class="form-error" id="form-error">⚠️ 請填寫所有欄位才能開始！</div>
+
+    <button class="btn-start" onclick="startMission()" style="margin-top:22px">
+      開始調查 →
+    </button>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════
+     MAIN SCREEN (status bar + scene + progress)
+     ══════════════════════════════════════ -->
+<div id="screen-main">
+
+<!-- ── Status Bar ── -->
+<div class="status-bar">
+  <div class="status-title">🔍 AI 安全調查員</div>
+  <div class="status-student" id="student-label">偵探：載入中…</div>
+  <div class="status-badge">🗂 蒐證現場</div>
+</div>
+
+<!-- ── Scene ── -->
+<div class="scene-wrapper">
+  <div class="scene-container" id="scene">
+
+    <!-- Real scene image: first-person view from inside Waymo -->
+    <img
+      class="scene-img"
+      src="Gemini_Generated_Image_a7n0f5a7n0f5a7n0.png"
+      alt="事發現場：Waymo 車內第一視角"
+      draggable="false"
+    >
+
+    <!-- HUD corner brackets -->
+    <div class="hud-corner hud-tl"></div>
+    <div class="hud-corner hud-tr"></div>
+    <div class="hud-corner hud-bl"></div>
+    <div class="hud-corner hud-br"></div>
+
+    <!--
+      Hotspot positions — first-person view (2760 × 1504 px)
+
+      🔵 車頂感測器 → camera sensor above rearview mirror  ≈ (1380, 150) → 50%,  10%
+      🚧 路口標示   → 25 km/h speed sign, left of road     ≈ (450,  390) → 16%,  26%
+      🤕 受傷位置   → child running through windshield      ≈ (1490, 660) → 54%,  44%
+      🚗 車速紀錄   → Waymo dashboard W-logo / display      ≈ (1080,1340) → 39%,  89%
+      📹 監視器     → overhead inset map bottom-right       ≈ (2430,1210) → 88%,  80%
+    -->
+
+    <div class="hotspot" id="hs-0" style="left:50%; top:10%"
+         onclick="openEvidence(0)">
+      🔵
+      <span class="hotspot-label">車頂感測器</span>
+    </div>
+
+    <div class="hotspot" id="hs-1" style="left:16%; top:26%"
+         onclick="openEvidence(1)">
+      🚧
+      <span class="hotspot-label">速限標示</span>
+    </div>
+
+    <div class="hotspot" id="hs-2" style="left:57%; top:49%"
+         onclick="openEvidence(2)">
+      🤕
+      <span class="hotspot-label">受傷位置</span>
+    </div>
+
+    <div class="hotspot" id="hs-3" style="left:39%; top:89%"
+         onclick="openEvidence(3)">
+      🚗
+      <span class="hotspot-label">車速紀錄</span>
+    </div>
+
+    <div class="hotspot" id="hs-4" style="left:88%; top:80%"
+         onclick="openEvidence(4)">
+      📹
+      <span class="hotspot-label">監視器</span>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Progress Bar ── -->
+<div class="progress-bar">
+  <span class="progress-label">蒐集</span>
+  <div class="dots">
+    <div class="dot" id="d0"></div>
+    <div class="dot" id="d1"></div>
+    <div class="dot" id="d2"></div>
+    <div class="dot" id="d3"></div>
+    <div class="dot" id="d4"></div>
+  </div>
+  <div class="progress-text" id="ptext">找到 3 個才能進行下一步</div>
+  <button class="btn-next" id="btn-next" onclick="goNext()">進行分析 →</button>
+</div>
+
+<!-- ── Evidence Modal ── -->
+<div class="overlay" id="overlay" onclick="closeOutside(event)">
+  <div class="ev-card">
+    <button class="ev-close" onclick="closeModal()">✕</button>
+    <div class="ev-tag" id="ev-tag"></div>
+    <span class="ev-icon" id="ev-icon"></span>
+    <div class="ev-title" id="ev-title"></div>
+    <div class="ev-body"  id="ev-body"></div>
+    <button class="btn-collect" id="btn-collect" onclick="collectEvidence()">
+      ✅ 收下這張證據
+    </button>
+  </div>
+</div>
+
+<!-- ── Toast ── -->
+<div class="toast" id="toast"></div>
+
+</div><!-- /screen-main -->
+
+<script>
+// ─────────────────────────────────────────────────────
+// LOGIN
+// ─────────────────────────────────────────────────────
+function startMission() {
+  const cls  = document.getElementById('input-class').value.trim();
+  const seat = document.getElementById('input-seat').value.trim();
+  const name = document.getElementById('input-name').value.trim();
+  const err  = document.getElementById('form-error');
+
+  if (!cls || !seat || !name) {
+    err.classList.add('show');
+    return;
+  }
+  err.classList.remove('show');
+
+  // Store student info
+  const student = { cls, seat, name };
+  sessionStorage.setItem('student', JSON.stringify(student));
+
+  // Update status bar label
+  document.getElementById('student-label').textContent =
+    `🕵️ ${cls} ${seat}號 ${name}`;
+
+  // Transition: hide login, show main
+  document.getElementById('screen-login').classList.add('hidden');
+  const main = document.getElementById('screen-main');
+  main.style.display = 'flex';
+  // Trigger fade-in on next frame
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    main.classList.add('visible');
+  }));
+}
+
+// Allow Enter key to submit login
+['input-class','input-seat','input-name'].forEach(id => {
+  document.getElementById(id)?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') startMission();
+  });
+});
+
+// ─────────────────────────────────────────────────────
+// Evidence data  (5 items, each linked to a hotspot)
+// ─────────────────────────────────────────────────────
+const EVIDENCES = [
+  {
+    // hs-0: 車頂感測器 (🔵) — top sensor camera
+    icon:  '🔵',
+    tag:   'AI 感測器數據',
+    title: '光達感測報告',
+    body:  'Waymo 車頂的光達可以看到<em>三個足球場</em>那麼遠的距離！它確實有看到旁邊那輛大車。但是 AI 以為大車旁邊<em>不會有人突然跑出來</em>，所以沒有提早放慢速度。結果小朋友一出現，AI 來不及完全停下來。'
+  },
+  {
+    // hs-1: 路口標示 (🚧) — speed sign
+    icon:  '🚧',
+    tag:   '法規對照',
+    title: '路口速限規定',
+    body:  '這裡離學校門口只有 <em>15 公尺</em>，法律規定這個範圍內車速<em>不能超過時速 25 公里</em>。Waymo 當時的速度是 <em>27 公里</em>。'
+  },
+  {
+    // hs-2: 受傷位置 (🤕) — child figure
+    icon:  '🤕',
+    tag:   '目擊者證詞',
+    title: '現場目擊紀錄',
+    body:  '目擊者小明的媽媽說：「我看到那台白色車子<em>有閃一下</em>，但還是撞到了孩子。」<br><br>小朋友當時背著書包，<strong>從右邊的大車後方突然跑出來</strong>。'
+  },
+  {
+    // hs-3: 車速紀錄 (🚗) — Waymo dashboard
+    icon:  '🚗',
+    tag:   'AI 感測器數據',
+    title: '煞車紀錄',
+    body:  '車上的紀錄器顯示，AI 發現小朋友時，車速是 <em>27 公里</em>，它<strong>馬上煞車</strong>，撞到的時候速度已經降到 <em>10 公里</em>。'
+  },
+  {
+    // hs-4: 監視器 (📹) — overhead inset map
+    icon:  '📹',
+    tag:   '影像紀錄',
+    title: '監視器畫面',
+    body:  '監視器畫面顯示，小朋友從一輛停著的大車（SUV）後面<em>突然跑出來</em>，從出現到被撞，<em>不到半秒鐘</em>。'
+  }
+];
+
+// ─────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────
+const collected = new Set();
+let currentId   = null;
+
+// main screen starts hidden (login screen shows first)
+document.getElementById('screen-main').style.display = 'none';
+
+// ─────────────────────────────────────────────────────
+// Open evidence card
+// ─────────────────────────────────────────────────────
+function openEvidence(id) {
+  currentId = id;
+  const e = EVIDENCES[id];
+
+  document.getElementById('ev-tag').textContent   = e.tag;
+  document.getElementById('ev-icon').textContent  = e.icon;
+  document.getElementById('ev-title').textContent = e.title;
+  document.getElementById('ev-body').innerHTML    = e.body;
+
+  const btn = document.getElementById('btn-collect');
+  if (collected.has(id)) {
+    btn.textContent = '✅ 已收入調查資料夾';
+    btn.className   = 'btn-collect done';
+  } else {
+    btn.textContent = '✅ 收下這張證據';
+    btn.className   = 'btn-collect';
+  }
+
+  document.getElementById('overlay').classList.add('open');
+}
+
+// ─────────────────────────────────────────────────────
+// Collect evidence
+// ─────────────────────────────────────────────────────
+function collectEvidence() {
+  if (currentId === null || collected.has(currentId)) return;
+
+  collected.add(currentId);
+
+  document.getElementById('hs-' + currentId).classList.add('collected');
+  document.getElementById('d'  + currentId).classList.add('filled');
+
+  const btn = document.getElementById('btn-collect');
+  btn.textContent = '✅ 已收入調查資料夾';
+  btn.className   = 'btn-collect done';
+
+  updateProgress();
+  showToast('📁 證據已加入調查資料夾！');
+  setTimeout(closeModal, 800);
+}
+
+// ─────────────────────────────────────────────────────
+// Progress
+// ─────────────────────────────────────────────────────
+function updateProgress() {
+  const n    = collected.size;
+  const pEl  = document.getElementById('ptext');
+  const bEl  = document.getElementById('btn-next');
+
+  if (n >= 5) {
+    pEl.textContent = '🎉 5 張全部找到了！';
+    pEl.style.color = 'var(--green)';
+  } else if (n >= 3) {
+    pEl.textContent = `已蒐集 ${n} 張，可繼續或再找找看`;
+    pEl.style.color = 'var(--accent2)';
+  } else {
+    pEl.textContent = `再找 ${3 - n} 張就能繼續`;
+    pEl.style.color = '';
+  }
+
+  if (n >= 3) bEl.classList.add('active');
+}
+
+// ─────────────────────────────────────────────────────
+// Modal helpers
+// ─────────────────────────────────────────────────────
+function closeModal() {
+  document.getElementById('overlay').classList.remove('open');
+  currentId = null;
+}
+
+function closeOutside(e) {
+  if (e.target === document.getElementById('overlay')) closeModal();
+}
+
+// ─────────────────────────────────────────────────────
+// Toast
+// ─────────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ─────────────────────────────────────────────────────
+// Next step
+// ─────────────────────────────────────────────────────
+function goNext() {
+  if (collected.size < 3) return;
+  // TODO: connect to evidence classification screen
+  const s = JSON.parse(sessionStorage.getItem('student') || '{}');
+  const report = {
+    class:     s.cls,
+    seat:      s.seat,
+    name:      s.name,
+    collected: [...collected].map(i => EVIDENCES[i].title),
+    total:     collected.size,
+    ts:        new Date().toISOString()
+  };
+  console.log('📊 Behavior tracked:', report);
+  alert(`✅ 你蒐集了 ${collected.size} 張證據！\n下一步：把證據分類。`);
+}
+
+// ─────────────────────────────────────────────────────
+// Keyboard: Escape closes modal
+// ─────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+});
+</script>
+</body>
+</html>
